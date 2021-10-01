@@ -1,0 +1,677 @@
+---
+title: "Movie recommendation system using the MovieLens dataset"
+author: "Žiga Kljun"
+date: "9/27/2021"
+output:
+  pdf_document: default
+  html_document: default
+toc: yes
+---
+
+
+```{r Install Packages, include=FALSE}
+
+.packages = c("tidyverse",       
+              "caret",        
+              "data.table",  
+              "dplyr",
+              "dslabs",
+              "gridExtra",       #combine plots
+              "knitr",           #report output
+              "kableExtra"      #nice tables
+              )
+
+lapply(.packages, require, character.only=TRUE)
+
+
+```
+
+
+
+```{r Functions and Hooks, include=FALSE}
+# Customize knitr output
+#Set Thousands Separator for inline output
+knitr::knit_hooks$set(inline = function(x) { if(!is.numeric(x)){ x }else{ prettyNum(round(x,2), big.mark=",") } })
+#we've already set the graphic device to "png" in the RMD options. the default device for pdfs draws every point of a scatterplot, creatinvg *very* big files.
+#But png is not as crisp, so we will set a higher resolution for pdf output of plots. 
+knitr::opts_chunk$set(dpi=300)
+#Create Kable wrapper function for thousands separator in table output, and nice formating with kableExtra
+niceKable = function(...) {
+  knitr::kable(..., format.args = list(decimal.mark = '.', big.mark = ",")) %>% kable_styling()
+}
+
+```
+
+\newpage
+# Introduction
+
+This report is part of a Capstone assignment from *"HarvardX Profesional Certificate Data Science Program"*. Goal of this assignment is to create a movie recommendation system based on MovieLens dataset. 
+
+The importance of recommendation systems has been growing in the last 10 years. With the rise of companies like Netflix, Amazon and Facebook, recommendation systems are more and more common in our everyday life. Recommendation systems in general, are set of algorithms, implemented to suggest their users the most relevant items. They became critical in a lot of industries since they are able to generate business advantage - both, through revenue and through time saved. Very known and similar to our case is recommendation system from Netflix, which became famous in 2006, when Netflix organised challange called *""Netflix Prize""* with goal to create the best referral system. The winner recieved 1 million dollars as a prize.
+
+Recommendation systems are really critical in some industries, as they can generate huge revenue if they are effective, or even a way to differentiate themselves significantly from competitors. As proof of the importance of referral systems, we can mention that a few years ago Netflix organized challenges (the “Netflix Prize”) where the goal was to create a referral system that would be better than its own prize algorithm. $ 1 million to win.
+
+MovieLens datasets are stable benchmark datasets, provided by the GroupLens research lab in the Department of Computer and Engineering at the University of Minnesota. The GroupLens lab specializes in recommender systems, online communities, mobile and ubiquitous technologies, digital libraries, and local geographic information systems. In order to gather research data on personalized recommendations, they originally collected the data in 1997. It contained about 11 million ratings for about 8500 movies. For our project, we used *"MovieLens 10M Dataset"*, which includes 10 million ratings and 100,000 tag applications applied to 10,000 movies by 72,000 users. The dataset was released in 2009. It include information about users, movies, their genres and ratings from 0,5 to 5 stars, provided by users. Each user has at least 20 ratings, but no further demographic information is included.
+
+In our project we will split the data by the 90/10 rule into the training and test sets. Then we are going to develop our best performing algorithm with the use of training set which we are going to further split into training and test sets for developing reasons. We are going to calculate accuracy of our model with root mean squere estimate or RMSE. RMSE of 0 would mean, that our model is correct 100% of the time but this is very unlikely. RMSE of 1 would mean, that our predictions are on average off by 1 star. Our goal for this project is to achieve $RMSE < 0.86490$ when prediciting unseen ratings.
+
+
+\newpage
+# Methods/Analysis
+
+## Prepare datasets for model development and and validation
+
+The following code was already provided by the HarvardX project instructions. In this project we used R 4.1.1.
+
+```{r Prepare datasets, eval=TRUE, results="hide", message=FALSE, warning=FALSE, include=FALSE}
+
+##########################################################
+# Create edx set, validation set (final hold-out test set)
+##########################################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(gridExtra)
+library(dplyr)
+library(dslabs)
+library(knitr)
+library(kableExtra)
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+# if using R 3.6 or earlier:
+#movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+#                                           title = as.character(title),
+#                                           genres = as.character(genres))
+# if using R 4.0 or later:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+
+```
+
+
+## Exploratory Data Analysis
+
+### Basic information about the dataset
+
+Prior model development, it is important, that we understand the problem and our data. Since our instructions was not to use validation sub-dataset, I will treat is separately from the rest, eventhough it is technically still a part  of our MovieLens 10M dataset. I will call our "development dataset" an "edx" dataset, and validation dataset will be "validation" dataset. Edx dataset contains 9,000,055 records and validation dataset contains 999,999. Both of them have 6 rows: userId (int), movieId (num), rating (num), timestamp (int), title (chr) and genres (chr). Preview of the data is seen below:
+
+```{r Edx preview,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#data preview
+kable(edx[1:5,]) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+### Users
+
+In edx dataset we have 69,878 different users which on average rated 128.7967 movies. In the plot bellow we can see the distribution of users per average movie rating. As we can see, most users tend to rate movie somewhere between 3 and 4 stars, more closely to the 4. Even if we look at the total average, it is 3.51 which confirms our finding. 
+
+```{r Number of users per average rating,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#number of users per average rating
+edx %>% group_by(userId) %>%
+  summarize(avg_rating = mean(rating)) %>%
+  ggplot(aes(x = avg_rating)) +
+    geom_bar(stat = "bin", color = "black", fill = "blue")
+
+```
+
+If we move to the number of ratings provided by user, the results shows us, that the most users tend not to rate too many movies. 20 is minimum, but shortly after that, the amount of users starts to fall with the total movies rated rising. The plot bellow is showing the distribution of users in comparison to number of movies rated.
+
+
+```{r Number of ratings per user,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#number of ratings per user
+edx %>% group_by(userId) %>%
+  summarize(n_rating = n()) %>%
+  ggplot(aes(x = n_rating)) +
+  geom_bar(stat = "bin", color = "black", fill = "blue", bins = 50)
+
+```
+
+
+### Genres
+
+As mentioned before, in addition to user, movie and rating information, we also have the information about movie genres. In general it is believed, that movie genre has huge impact on the probability, that the user will like the movie so this could be an important column for us. In the edx dataset we have 797 different inputs for movie genres.
+
+```{r Most popular genres inputs,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#most popular ganres
+pg <- edx %>% group_by(genres) %>%
+  summarize(number_occurances = n()) %>%
+  arrange(desc(number_occurances))
+
+kable(pg[1:10,]) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+Above are shown the most popular genre entries with the number of their occurances. At first we noticed, that Drama is the most popular genre, followed by Comedy. But when looking at the third most common entry, we noticed, that is is a mix of two categories. This explains, why do we have almost 800 different genre inputs eventhough there is not so many different movie genres. Later in this project we will address this topic, but for now, we will treat each genre entry as its' own genre. In the statistics bellow we can see, that most complex combinations of genre includes as much as seven different genres. There are also three occurances where mix contains six different genres in one genre entry.
+
+```{r Genre combinations,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#most popular ganres
+pg <- edx %>% group_by(genres) %>%
+  summarize(genres = first(genres), number_of_genres = str_count(genres, "\\|")) %>%
+  arrange(desc(number_of_genres)) %>%
+  head()
+
+kable(pg[1:5,]) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+
+```
+
+In the plot bellow we can see best ten genre mixes based on their average rating. In red color is plotted also their median value. Based on the results we could assume, that movies with the combination of Animation, IMAX and Sci-Fi genres tends to have the best ratings.
+
+```{r Best genres based od mean and median,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#best genres based on mean and median
+edx %>% group_by(genres) %>%
+  summarize(mean_rating = mean(rating), median_rating = median(rating)) %>%
+  arrange(desc(mean_rating)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(genres, mean_rating))) +
+    geom_point(aes(y = mean_rating, color = "mean")) +
+    geom_point(aes(y = median_rating, color = "median")) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+To get a bit more robust results, we drawn the same plot, but this time only for genres, that contains at leas 50,000 ratings. This time we get a bit different results, with Drama, Film-Noir and Romance mix at the top.
+
+```{r Best genres based od mean and median over 50,000,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#best genres based on mean and median with at least 50,000 entries
+edx %>% group_by(genres) %>%
+  summarize(number_entries = n(), mean_rating = mean(rating), median_rating = median(rating)) %>%
+  filter(number_entries >= 50.000) %>%
+  arrange(desc(mean_rating)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(genres, mean_rating))) +
+  geom_point(aes(y = mean_rating, color = "mean")) +
+  geom_point(aes(y = median_rating, color = "median")) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+Even after this analysis, the results can still be a bit confusing, so I decided to separate genre entries to the single genre. Bellow we can see all the individual genres with their average rating and the amount of times genre is present in our MovieLens dataset.
+
+```{r Individual genres,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#get all independent genres
+genres <- edx %>% separate_rows(genres, sep = "\\|", convert = TRUE) %>%
+  group_by(genres) %>%
+  summarize(avg_rating = mean(rating), n_ratings = n())
+
+kable(genres[1:10,]) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+
+```
+
+Now we can actually plot, which genre has the most movies. The results are seen in the plot bellow. We see, that the most movies fall into Drama genre, followed by the Comedy and Action.
+
+
+```{r Movies per genre,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#number of movies per genre
+edx %>% separate_rows(genres, sep = "\\|", convert = TRUE) %>%
+  group_by(genres) %>%
+  summarize(number_of_movies = n()) %>%
+  ggplot(aes(x = reorder(genres, number_of_movies), y = number_of_movies)) +
+    geom_bar(stat="identity", fill="blue") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+### Movies
+
+Until now, we have been focusing on more general areas, such as genres. Now we will look also in the individual movies. Bellow we can see the most rated movies with their average rating. We can see, that Pulp Fiction, Forrest Gump and Silence of the Lambs are on top. This should not be surprising, since they are all very well known movies.
+
+```{r Most popular movies,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#most popular movies (most appearances)
+movieApp <- edx %>% group_by(movieId) %>% summarize(title = first(title), nr = n(), avg_rating = mean(rating))
+mao <- movieApp[order(-movieApp$nr) [1:5],]
+
+kable(mao[1:5,]) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+
+```
+
+
+Before we already saw, how are moview average ratings distributed - average was 3.51, and the results were a bit skewed to the four stars. Now lets take a look at the distribution of actual star ratings. Bellow we can see, that if we drew the line, it through the top of the bins, it would be similar to our previous plot. 
+
+```{r Star distribution,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#ratings
+edx %>% group_by(rating) %>%  
+  ggplot(aes(x = rating)) +
+    geom_bar(stat="bin", fill="blue") 
+
+```
+
+When looking at the full star ratings, as expected, four stars are the most common, followed by the three. But we noticed, that the amount of half stars are significantly lower than the ones with full star. Are users more likely to give full star review, rather than the half one? When looking at the data, however, we noticed, that half stars were only introduced in 2003, which explains this huge gap between full and half stars ratings. To clarify the situation, I splited data to before and after 2003. Now the results are more clear. In the plots bellow, you can see distribution of ratings before and after 2003. As we found out before, there are no half star ratings before 2003. Other than that, the results are quite expected based on our previous plot. However, we can see, that half stars in general are not less common than full star ratings, since they fall between the full star ratings next to then. However, four star rating is still the most common rating in both plots.
+
+
+```{r Rating distribution before and after 2003,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#prior 2003 (full stars only)
+library(dplyr)
+library(dslabs)
+edx <- edx %>% mutate(timestamp1 = as.POSIXct(timestamp, origin = "1970-01-01", tz = "UTC"), year = gsub("[\\(\\)]", "", regmatches(title, gregexpr("\\(.*?\\)", title))))
+rating_prior2003 <- edx %>% filter(format(as.Date(timestamp1, format="%d/%m/%Y"),"%Y") < 2003) %>% 
+  group_by(rating) %>% 
+  ggplot(aes(x = rating)) +
+  geom_bar(stat="bin", fill="blue") +
+  ggtitle("Movie ratings before 2003")
+
+
+#after 2003
+rating_after2003 <- edx %>%  filter(format(as.Date(timestamp1, format="%d/%m/%Y"),"%Y") >= 2003) %>%
+  group_by(rating) %>% 
+  ggplot(aes(x = rating)) +
+  geom_bar(stat="bin", fill="blue") +
+  ggtitle("Movie ratings after 2003")
+
+grid.arrange(rating_prior2003, rating_after2003, ncol=2)
+
+```
+
+
+Now we know, how are movie ratings distributed by individual ratings (how many stars). But how are they distributed by each year? Were movies in 1950s higher than today? On the graph bellow we can see average ratings for each year. For each year we have also calculated standard error. The standard error (SE) of a statistic is the approximate standard deviation of a statistical sample population. The standard error is a statistical term that measures the accuracy with which a sample distribution represents a population by using standard deviation. In statistics, a sample mean deviates from the actual mean of a population; this deviation is the standard error of the mean. It is calculated as standard deviation devided by squere root of the sample size. Red line represent overall average rating of 3.51.
+
+
+```{r Average rating by years,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#average rating by year compared to overall average
+avg_rating <- mean(edx$rating)
+
+edx %>% filter(year %in% c(1900:2015)) %>%
+  group_by(year) %>%
+  summarize(avg_rating_year = mean(rating), sd = sd(rating), n = n(), se = sd/sqrt(n)) %>% 
+  ggplot(aes(x = year, y = avg_rating_year)) +
+    geom_point() +
+    geom_errorbar(aes(ymin=avg_rating_year-se, ymax=avg_rating_year+se)) +
+    geom_hline(yintercept = avg_rating, color = "red") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+On the plots we can, that the ratings from 30 years or more ago, tend to have higher ratings on average. Going back, we also notice, that the standard error is larger than in more recent years. Based on this observations we could assume, that now we have more movies than before. The plot bellow, where numbers of movies per year are presented, actually confirms this. However, we noticed, that even though the number of movies had been rising up until 1995, it actually start declining short after that. Plot also explains, why most recent movies are much closer to total average than older movies. This is due to recent movies being more common which leads to a greater impact on total average.
+
+Based on the findings above, the below summary is not very surprising. 50th percentile (median) and 75th percentile are the same (both four stars), with 25th being 3 stars. 
+
+```{r Summary statistics,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#stats
+quantile(edx$rating) 
+
+```
+
+
+### Timestamp
+
+Timestamp in data represents time and date of the individual review. The earliest review was collected in 1995. As we can see on the plot below, this was also the year, when average rating (around four stars) and also the standard error were the highest. Over time, the average ratings started to move more closely around the total average rating with smaller standard errors.
+
+```{r Rating per timestamp,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#timestamp on rating
+edx %>% group_by(year_review = format(as.Date(timestamp1, format="%d/%m/%Y"),"%Y")) %>%
+  summarize(avg_rating = mean(rating), sd = sd(rating), n = n(), se = sd/sqrt(n)) %>%
+  ggplot(aes(x = year_review, y = avg_rating)) +
+    geom_point() +
+    geom_errorbar(aes(ymin=avg_rating-se, ymax=avg_rating+se))  
+
+```
+
+
+When looking at the rating distribution per timestamp year, the results are not as predictable. We noticed, that the number of ratings per timestamp fluctuate year over year. We have three peaks (1996, 2000, 2005) and two years with very low number of ratings (1998, 2009). Other years are relatively similar (from 400,000 to 700,000 ratings in one year).
+
+
+
+```{r Number of ratings per timestamp,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#number of ratings per timestamp
+edx %>% group_by(year_review = format(as.Date(timestamp1, format="%d/%m/%Y"),"%Y")) %>%
+  summarize(n = n()) %>%
+  ggplot(aes(x = year_review, y = n)) +
+    geom_bar(stat = "identity", fill = "blue")
+
+```
+
+\newpage
+# Recommendation system modeling
+
+## Preparing the data
+
+In this section of the report, I will focus on recommendation system development - starting with data preparation. As mentioned in the beginning, we must not use validation dataset while still developing our models and algorithms. Thus, we first split the edx dataset into train and test datasets. We will use the train dataset to train our model and then based on our algorithm we will predict rating values in test dataset. We will compare this values with the actual ones and calculate RMSE. When we will develop our best permorming model, we will test it with the validation data.
+
+
+```{r Prepare datasets for development, eval=TRUE, results="hide", message=FALSE, warning=FALSE, include=FALSE}
+
+##### RECOMMENDATION SYSTEM
+
+#first we need to split edx data into train and test data
+# Create train set and test sets from edx
+set.seed(2021, sample.kind = "Rounding")
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+train_set <- edx[-test_index,]
+temp <- edx[test_index,]
+
+# Make sure userId and movieId in test set are also in train set
+test_set <- temp %>%
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId")
+
+# Add rows removed from test set back into train set
+removed <- anti_join(temp, test_set) 
+train_set <- rbind(train_set, removed)
+
+# Remove temporary files to tidy environment
+rm(test_index, temp, removed) 
+
+
+```
+
+## Naive prediction
+
+We will start with the naive prediction. We will predict, that all unseen ratings are just the average rating (3.51). This prediction will not very good, but can serve as a good baseline for our future development. We used following formula:
+$$Rating_{movie} = Mean_{overall} $$
+
+
+```{r Overall averages,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#start with naive RMSE
+avg_rating <- mean(train_set$rating)
+
+naive_rmse <- RMSE(test_set$rating, avg_rating)
+
+rmse_results <- data_frame(method = "Overall average", RMSE = naive_rmse)
+
+#rmse_results
+
+kable(rmse_results) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+Our RMSE in this case is 1.06, which means, that our prediction, on average, misses the actual rating by 1.06 stars. This is not terrible for beginning, but can definitely be better.
+
+## Movies' averages
+
+For our next alghoritms, instead of total averages, we will use averages from individual movies. In general we will calculate the average for each movie and then, when predicting unseen rating, we will just look at which movie we are looking at and then assume, that the rating will be movie's average:
+$$Rating_{movie} = Mean_{movie} $$
+
+```{r Movie average,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#Next we try using averages from movie ratings
+#get movie rating averages
+movie_ratings <- train_set %>% group_by(movieId) %>% 
+                   summarize(avg_rating_movie = mean(rating))
+#apply these averages to test dataset as predictions
+movie_averages_prediction <- test_set %>% left_join(movie_ratings, by="movieId") %>% .$avg_rating_movie
+
+#compare predictions with true values
+movie_mean_rmse <- RMSE(test_set$rating, movie_averages_prediction)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="Movies' averages",
+                                     RMSE = movie_mean_rmse ))
+#rmse_results
+
+kable(rmse_results) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+We managed to improve our RMSE - now, on average, we are missing with our prediction for less than one star. But we are still far from our goal of 0.86490.  
+
+## Users' averages
+
+When rating the movie, movie itself is not the only variable than can impact the decision. Some users tend to rate all movies higher than the others, regardless of how much they actually like the movie. To take this into account, we will calculate how each user rates movies on average compared to the total average. Then, when predicting ratings, we will add this bias to our existing predictions from movie averages:
+
+$$Rating_{movie} = Mean_{movie} + Bias_{user} $$
+```{r User average,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#We will now also add the user effect on top
+#get effect of user ratings
+user_ratings_effect <- train_set %>% group_by(userId) %>%
+                        summarize(avg_rating_user = mean(rating) - avg_rating)
+#apply effect on previously calculated values
+user_effect_predictions <- test_set %>% left_join(user_ratings_effect, by="userId") %>% .$avg_rating_user
+
+movie_user_mean_rmse <- RMSE(test_set$rating, movie_averages_prediction + user_effect_predictions)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="+Users' averages",
+                                     RMSE = movie_user_mean_rmse ))
+#rmse_results
+
+kable(rmse_results) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+
+We managed to improve our prediction even more. RMSE fell to 0.885, which is already very close to our desired value. But we will still try to improve our ratings.
+
+## Genres
+
+Even though we came very close to our desired RMSE value, we have still some variables, we need to take into our consideration. Now, when predicting, we take into account the overall movie average and user's bias toward high or low ratings. But often, this is not enough to predict whether the  movie likes or dislikes the movie. It is also up to movie's genre. For example,thrillers are on average better rated than animations. To some degree, this observation is already baked in in the movie averages, but we will still add it to our model to see, if there are any improvements:
+$$Rating_{movie} = Mean_{movie} + Bias_{user} + Bias_{genre} $$
+```{r Genre average,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#We will add effect of genre
+#to do that, we will first split data to genres, calculate the effects and then merge it together
+train_set_genres <- train_set %>% separate_rows(genres, sep = "\\|", convert = TRUE)
+#set test_set ids so we will be able to merge them again later
+test_set$id <- seq.int(nrow(test_set))
+test_set_genres <- test_set %>% separate_rows(genres, sep = "\\|", convert = TRUE)
+
+movie_ratings_effect <- movie_ratings 
+movie_ratings_effect$avg_rating_movie <- movie_ratings_effect$avg_rating_movie - avg_rating
+
+#get genre effect; we need to take away previously calculated effects
+genre_ratings_effect <- train_set_genres %>% group_by(genres) %>% left_join(movie_ratings_effect, by="movieId") %>% 
+                          left_join(user_ratings_effect, by="userId") %>% summarize(avg_rating_genre = mean(rating-avg_rating_movie-avg_rating_user-avg_rating))
+
+genre_user_movie_effect_predictions <- movie_averages_prediction + user_effect_predictions + test_set_genres %>% left_join(genre_ratings_effect, by="genres") %>% 
+                                        group_by(id) %>% summarize(title = first(title), avg_rating_genre = mean(avg_rating_genre))%>% .$avg_rating_genre
+
+
+movie_user_genre_mean_rmse <- RMSE(genre_user_movie_effect_predictions, test_set$rating)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="+Genres' averages",
+                                     RMSE = movie_user_genre_mean_rmse ))
+
+#rmse_results
+
+kable(rmse_results) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+
+We can see, that we managed to further improve our model. Not by much, but this was expected due to movie's genre bias is already partly taken into account with movie's average.
+
+## Users' genres preferences
+
+Sometimes, consideration of movie's average, users tendency to rate movies low or high and genre's bias is not enough. For example, if particular user prefers documentaries and dislikes romantic comedies, he will not like the movie *"Pretty Woman"*, even though user tends to rate movies quite high and *"Pretty Woman"* is on average rated quite highly. To take this genre bias into account, we will calculate user's biases towards different genres and then add this bias to our existing prediction:
+$$Rating_{movie} = Mean_{movie} + Bias_{user} + Bias_{genre} + Bias_{user-genre} $$
+
+```{r Users genres preferences,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#add effect of user liking genre
+genre_user_ratings_effect <- train_set_genres %>% group_by(genres, userId) %>% left_join(movie_ratings_effect, by="movieId") %>% 
+                               left_join(user_ratings_effect, by="userId") %>% left_join(genre_ratings_effect, by="genres") %>% 
+                                summarize(avg_rating_genre_user = mean(rating-avg_rating_movie-avg_rating_user-avg_rating-avg_rating_genre))
+
+genreuser_genre_user_movie_effect_predictions <- genre_user_movie_effect_predictions + test_set_genres %>%
+                                                  left_join(genre_user_ratings_effect, by=c("genres","userId")) %>% 
+                                                  group_by(id) %>% summarize(title = first(title), avg_rating_genre_user = mean(avg_rating_genre_user))%>% .$avg_rating_genre_user
+#replace NAs with average rating
+genreuser_genre_user_movie_effect_predictions <- replace_na(genreuser_genre_user_movie_effect_predictions, avg_rating)
+
+movie_user_genre_genreuser_mean_rmse <- RMSE(genreuser_genre_user_movie_effect_predictions, test_set$rating)
+
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method="+Users' genres preferences",
+                                     RMSE = movie_user_genre_genreuser_mean_rmse ))
+
+#rmse_results
+
+kable(rmse_results) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+We did it! After adding user's genre bias, we managed to get RMSE smaller than 0.86499. Our RMSE on edx dataset is 0.852. Users' preferences regarding genres seems to have relatively big additional impact on top of the properties already taken into account. 
+Now we can run the same algorithm on the validation dataset to see, if our model is really performing as well as it looks here.
+\newpage
+
+# Final results
+
+Now, when we finally have our final model, we need to evaluate it, to see, how good it is. We will do that using RMSE. For our training set, we will use edx dataset, which we already used for development of our model. Our test set will be validation dataset, which was unused up until this evaluation. We will try to predict ratings in validation dataset based on other columns and ther calculate RMSE between the actual ones and the one we predicted. This is the result:
+
+```{r Final evaluation,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#######################
+### test with real data
+avg_rating <- mean(edx$rating)
+
+edx_genres <- edx %>% separate_rows(genres, sep = "\\|", convert = TRUE)
+#set test_set ids so we will be able to merge them again later
+validation$id <- seq.int(nrow(validation))
+validation_genres <- validation %>% separate_rows(genres, sep = "\\|", convert = TRUE)
+
+movie_ratings <- edx %>% group_by(movieId) %>% 
+  summarize(avg_rating_movie = mean(rating))
+
+movie_ratings_effect <- movie_ratings 
+movie_ratings_effect$avg_rating_movie <- movie_ratings_effect$avg_rating_movie - avg_rating
+
+user_ratings_effect <- edx %>% group_by(userId) %>%
+  summarize(avg_rating_user = mean(rating) - avg_rating)
+
+genre_ratings_effect <- edx_genres %>% group_by(genres) %>% left_join(movie_ratings_effect, by="movieId") %>% 
+  left_join(user_ratings_effect, by="userId") %>% summarize(avg_rating_genre = mean(rating-avg_rating_movie-avg_rating_user-avg_rating))
+
+genre_user_ratings_effect <- edx_genres %>% group_by(genres, userId) %>% left_join(movie_ratings_effect, by="movieId") %>% 
+  left_join(user_ratings_effect, by="userId") %>% left_join(genre_ratings_effect, by="genres") %>% 
+  summarize(avg_rating_genre_user = mean(rating-avg_rating_movie-avg_rating_user-avg_rating-avg_rating_genre))
+
+movie_averages_prediction <- validation %>% left_join(movie_ratings, by="movieId") %>% .$avg_rating_movie
+
+user_effect_predictions <- validation %>% left_join(user_ratings_effect, by="userId") %>% .$avg_rating_user
+
+user_effect_predictions <- validation %>% left_join(user_ratings_effect, by="userId") %>% .$avg_rating_user
+
+genre_user_movie_effect_predictions <- movie_averages_prediction + user_effect_predictions + validation_genres %>% left_join(genre_ratings_effect, by="genres") %>% 
+  group_by(id) %>% summarize(title = first(title), avg_rating_genre = mean(avg_rating_genre))%>% .$avg_rating_genre
+
+genreuser_genre_user_movie_effect_predictions <- genre_user_movie_effect_predictions + validation_genres %>%
+  left_join(genre_user_ratings_effect, by=c("genres","userId")) %>% 
+  group_by(id) %>% summarize(title = first(title), avg_rating_genre_user = mean(avg_rating_genre_user)) %>% .$avg_rating_genre_user
+#replace NAs with average rating
+genreuser_genre_user_movie_effect_predictions <- replace_na(genreuser_genre_user_movie_effect_predictions, avg_rating)
+
+movie_user_genre_genreuser_mean_rmse_FINAL <- RMSE(genreuser_genre_user_movie_effect_predictions, validation$rating)
+
+
+final_rmse_results <- data_frame(method = "Final RMSE", RMSE = movie_user_genre_genreuser_mean_rmse_FINAL)
+
+kable(final_rmse_results) %>%
+  kable_styling(full_width = F) %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+As expected, we get the same RMSE as in our development testings which is 0.852 or 0.8516689 to be more exact. In the plot bellow we can also see the distribution of errors, which is normal with a center close to 0. If we look at the exact data, the graph has weak skewness of 0.5 and median value is a little less than 0 at -0.07.This means, that our model tends to rate movies a bit lower than they are in reality, but not by much.
+
+```{r Distribution of errors,  message=FALSE, warning=FALSE, include=TRUE, echo=FALSE}
+
+#misses of alghoritm
+differences_prediction <- genreuser_genre_user_movie_effect_predictions - validation$rating
+differences_prediction_2d <- format(round(differences_prediction, 2), nsmall = 2)
+differences_prediction_2d <- as.numeric(differences_prediction_2d)
+
+#plot distribution of errors
+ggplot() + aes(differences_prediction_2d) + 
+  geom_histogram(binwidth=0.1, colour="black", fill="blue")
+
+```
+
+\newpage
+
+# Conclusion
+
+The opbjective of this assesment was to develop a recommendation system, based on the MovieLens 10M dataset, which will predict movie ratings with RMSE smaller than 0.86490. Prior to modeling, we performed an analysis of our dataset to gain a better understanding of the data provided. After that we started to develop our model. We spit our train dataset into train and test datasets for developing purposes so our final test set remained unseen. In the process of developing our model, we took into account movies' averages, users' tendancies to give higher or lower ratings, genres' average ratings and users' liking of individual genres. When our model was showing good enough results in our development process, we decided to perform the final test on the real test set. It performed similar on the final test set as it did on our development test set. We got RMSE of 0.8516689.
+
+Even though we reached our goal, the model is still far from being perfect. RMSE of 0.85 in reallity is not very good, but we also lack quite o lot of information, which could be beneficial to our model (such as age, gender, geo location etc.). We could be also improving our model with existing information. We could do some additional feature engineering or regularization. We could also use other, more CPU or GPU-demanding machine learning techniques, which could give us better results. But for that, our personal computer would probably not be enough.
+
+\newpage
+# References
+
+Irizarry, R. (2020). Introduction to Data Science: Data Analysis and Prediction Alghoritms with R. CRC Press
+
+Rocca, B. (2019). Introduction to recommender systems. Available at: https://towardsdatascience.com/introduction-to-recommender-systems-6c66cf15ada (Accessed: 29 September 2021).
+
+Statistics How To (2021). RMSE: Root Mean Square Error. Available at: https://www.statisticshowto.com/probability-and-statistics/regression-analysis/rmse-root-mean-square-error (Accessed: 29 September 2021).
+
+
